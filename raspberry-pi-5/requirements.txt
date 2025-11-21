@@ -2,14 +2,22 @@
 # Python 3.13+
 
 # Audio processing
-soundfile==0.12.1
-scipy==1.11.4
+soundfile>=0.12.1
+scipy>=1.14.0
 
 # Whisper model for transcription
-faster-whisper==1.0.3
+faster-whisper>=1.0.3
+
+# NumPy (required by scipy)
+numpy>=1.26.0
 
 # System dependencies (install via apt):
 # - libasound2-dev (ALSA sound library)
 # - libportaudio2 (PortAudio)
 # - libsndfile1 (libsndfile for soundfile)
 # - python3-pyaudio (PyAudio for ALSA)
+#
+# For building from source (if pre-built wheels not available):
+# - gfortran (Fortran compiler for scipy)
+# - libopenblas-dev (Optimized BLAS library)
+# - liblapack-dev (Linear algebra package)

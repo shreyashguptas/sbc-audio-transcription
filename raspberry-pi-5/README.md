@@ -80,8 +80,14 @@ sudo apt install -y \
     libportaudio2 \
     libsndfile1 \
     python3-pyaudio \
-    alsa-utils
+    alsa-utils \
+    gfortran \
+    libopenblas-dev \
+    liblapack-dev \
+    pkg-config
 ```
+
+**Note**: `gfortran`, `libopenblas-dev`, and `liblapack-dev` are needed for building scipy if pre-built wheels aren't available for Python 3.13.
 
 ## 4. Python Virtual Environment Setup
 
