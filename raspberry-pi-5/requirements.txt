@@ -11,6 +11,9 @@ faster-whisper>=1.0.3
 # NumPy (required by scipy)
 numpy>=1.26.0
 
+# Interactive CLI menu system
+simple-term-menu>=1.6.1
+
 # System dependencies (install via apt):
 # - libasound2-dev (ALSA sound library)
 # - libportaudio2 (PortAudio)

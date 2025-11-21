@@ -127,21 +127,111 @@ This will install:
 - `soundfile` - Audio file reading/writing
 - `scipy` - Signal processing (resampling)
 - `faster-whisper` - Whisper model for transcription
+- `simple-term-menu` - Interactive configuration menus
 
-**Note**: The first time you run the script, Faster-Whisper will download the `base` model (~140MB). This may take a few minutes depending on your internet connection.
+**Note**: The first time you run the script, Faster-Whisper will download the selected model (~75MB for tiny, ~140MB for base, ~460MB for small). This may take a few minutes depending on your internet connection.
 
 ## 5. Running the Transcription
 
-### Start Transcription
+### Interactive Configuration Mode
+
+The transcribe.py script now features an **interactive menu system** that lets you test different configurations to find the optimal performance for your setup.
 
 ```bash
 python transcribe.py
 ```
 
-You should see:
+### Configuration Options
+
+You'll be guided through an interactive menu with arrow-key navigation:
+
+#### 1. **Preset Selection**
+Choose from quick presets or custom configuration:
+- **Fastest** - tiny model, int8, beam=1, no VAD (maximum speed)
+- **Balanced** - base model, int8, beam=5, VAD on (recommended)
+- **Quality** - small model, int8, beam=5, VAD on (better accuracy)
+- **Custom** - Configure all options manually
+
+#### 2. **Model Settings** (if Custom)
+- **Model Size**: tiny, base, small, medium, large-v3, turbo
+  - `tiny` - Fastest, least accurate (39M parameters)
+  - `base` - Balanced, recommended for Pi 5 (74M parameters)
+  - `small` - Better quality, slower (244M parameters)
+- **Compute Type**: int8 (recommended), int16, float32
+  - `int8` - Best CPU performance with minimal quality loss
+- **CPU Threads**: auto (recommended), 2, 4
+
+#### 3. **Transcription Quality** (if Custom)
+- **Beam Size**: 1 (fastest) to 10 (best quality)
+  - Recommended: 5 for balanced performance
+  - Use 1 for maximum speed (greedy search)
+- **Temperature**: 0.0 (deterministic) or fallback
+- **Condition on Previous Text**: Use context from previous chunks
+
+#### 4. **Voice Activity Detection (VAD)** (if Custom)
+- **Enable VAD**: Yes (filter silence) or No
+- **VAD Threshold**: 0.2 (sensitive) to 0.6 (strict)
+  - Lower = catches quiet speech, higher = ignores background noise
+- **Min Silence Duration**: 500ms to 2500ms
+  - How long to wait before considering speech ended
+
+#### 5. **Audio Processing** (if Custom)
+- **Chunk Duration**: 3s to 15s
+  - Shorter = lower latency, longer = more context
+- **Overlap Duration**: 1s to 3s
+  - Overlap between chunks to catch trailing words
+- **Microphone Gain**: 10x to 50x
+  - Adjust based on your microphone sensitivity
+- **Min Audio Energy**: Threshold for silence detection
+
+#### 6. **Advanced Settings** (if Custom)
+- CPU thread control
+- Energy threshold tuning
+- Context management options
+
+### Configuration Summary
+
+After selecting your options, you'll see a summary:
 
 ```
-============================================================
+======================================================================
+  CONFIGURATION SUMMARY
+======================================================================
+
+MODEL SETTINGS:
+  Model Size: base
+  Compute Type: int8
+  CPU Threads: auto
+
+TRANSCRIPTION QUALITY:
+  Beam Size: 5
+  Temperature: 0.0
+  Condition on Previous Text: Yes
+
+VAD SETTINGS:
+  VAD Enabled: Yes
+  VAD Threshold: 0.25
+  Min Silence Duration: 1500ms
+
+AUDIO PROCESSING:
+  Chunk Duration: 7s
+  Overlap Duration: 2s
+  Microphone Gain: 30.0x
+  Min Audio Energy: 0.0002
+======================================================================
+
+Start transcription with these settings?
+→ Yes, start transcription
+  No, reconfigure
+  Cancel
+```
+
+### During Transcription
+
+Once started, you should see:
+
+```
+======================================================================
   CONTINUOUS VOICE TRANSCRIPTION
   (Overlapping chunks - captures all words)
 ============================================================
@@ -158,17 +248,60 @@ Press Ctrl+C to stop
 
 - **Speak naturally** into the microphones
 - Transcription appears **in real-time** as you speak
-- **Ctrl+C** to stop
+- **Ctrl+C** to stop and see performance statistics
+
+### Performance Statistics
+
+When you stop transcription (Ctrl+C), you'll see detailed performance metrics:
+
+```
+======================================================================
+  PERFORMANCE STATISTICS
+======================================================================
+
+Configuration: base model, int8, beam=5
+Total Runtime: 60.5s
+Total Audio Processed: 105.0s
+Total Words Transcribed: 234
+Speed Factor: 1.74x real-time
+
+======================================================================
+Transcription stopped
+======================================================================
+```
+
+**Speed Factor** shows how fast the system processes audio:
+- **< 1.0x** = Slower than real-time (falling behind)
+- **= 1.0x** = Exactly real-time
+- **> 1.0x** = Faster than real-time (can handle continuous speech)
+
+Use these statistics to compare different configurations and find the best balance between speed and quality for your use case.
+
+### Testing Different Configurations
+
+To find your optimal setup:
+
+1. **Start with "Fastest" preset** - Test if tiny model quality is acceptable
+2. **Try "Balanced" preset** - Good starting point for most use cases
+3. **Test "Quality" preset** - See if small model runs fast enough
+4. **Use Custom mode** - Fine-tune specific parameters
+
+**Recommended Testing Workflow:**
+- Test each configuration for 30-60 seconds of speech
+- Note the Speed Factor in performance statistics
+- Compare transcription accuracy
+- Aim for Speed Factor > 1.5x for comfortable real-time use
 
 ### How It Works
 
 The script:
-- Records **7-second audio chunks** with **2-second overlap**
+- Records **audio chunks** (configurable: 3-15 seconds) with **overlap** (1-3 seconds)
 - Mixes **both LEFT and RIGHT channels** for optimal audio quality
-- Applies **30x gain** and processes at **16kHz**
-- Uses **Faster-Whisper base model** for transcription
+- Applies **configurable gain** (10-50x) and processes at **16kHz**
+- Uses **Faster-Whisper** with your selected model and settings
 - Implements **smart deduplication** to avoid repeating words
-- Filters silence automatically with **VAD (Voice Activity Detection)**
+- Optionally filters silence with **VAD (Voice Activity Detection)**
+- Tracks **performance metrics** for optimization
 
 ## 6. Troubleshooting
 
@@ -227,48 +360,74 @@ pip install --force-reinstall -r requirements.txt
 
 ### Processing Pipeline
 
-1. Record 7-second stereo audio at 48kHz
+1. Record audio chunks (configurable) as stereo at 48kHz
 2. Mix LEFT and RIGHT channels (average)
 3. Resample to 16kHz for Whisper
-4. Apply 30x gain amplification
+4. Apply gain amplification (configurable)
 5. Clip to [-1.0, 1.0] range
 6. Transcribe with Faster-Whisper
 7. Deduplicate overlapping words
 8. Display real-time results
+9. Track performance metrics
 
-## 8. Advanced Configuration
+## 8. Configuration Options Reference
 
-### Change Whisper Model
+All configuration is done through the interactive menu system. No manual code editing required!
 
-Edit `transcribe.py` line 24:
+### Model Sizes and Performance
 
-```python
-# Options: tiny, base, small, medium, large-v2, large-v3
-model = WhisperModel('base', device='cpu', compute_type='int8')
-```
+| Model | Parameters | Size | Speed on Pi 5 | Quality | Use Case |
+|-------|-----------|------|---------------|---------|----------|
+| `tiny` | 39M | ~75MB | Fastest (2-3x RT) | Basic | Maximum speed |
+| `base` | 74M | ~140MB | Fast (1.5-2x RT) | Good | Recommended default |
+| `small` | 244M | ~460MB | Moderate (0.8-1.2x RT) | Better | Quality focus |
+| `medium` | 769M | ~1.5GB | Slow (0.3-0.5x RT) | High | Offline processing |
+| `large-v3` | 1550M | ~3GB | Very slow | Best | Maximum quality |
+| `turbo` | Optimized | Varies | Fast | Good | Speed-optimized |
 
-**Model Sizes:**
-- `tiny` - Fastest, less accurate (~75MB)
-- `base` - Balanced (default) (~140MB)
-- `small` - Better accuracy (~460MB)
-- `medium` - High accuracy (~1.5GB)
-- `large-v3` - Best accuracy (~3GB)
+**RT = Real-time** (Speed factor estimates for Pi 5 with int8 compute type)
 
-### Adjust Recording Duration
+### Compute Types
 
-Edit `transcribe.py` line 36:
+| Type | Speed | Quality | Memory | Use on Pi 5 |
+|------|-------|---------|--------|-------------|
+| `int8` | Fastest | Excellent | Low | ✅ Recommended |
+| `int16` | Moderate | Slightly better | Medium | ⚠️ If quality critical |
+| `float32` | Slowest | Marginal gain | High | ❌ Not recommended |
 
-```python
-CHUNK_DURATION = 7  # Seconds per recording chunk
-```
+### Beam Size Impact
 
-### Modify Overlap
+| Beam Size | Speed | Quality | Best For |
+|-----------|-------|---------|----------|
+| 1 | Fastest (3-4x faster) | Good | Speed priority |
+| 3 | Fast | Better | Balanced |
+| 5 | Moderate | Good | Default recommended |
+| 7-10 | Slower | Marginal improvement | Quality focus |
 
-Edit `transcribe.py` line 37:
+### VAD (Voice Activity Detection)
 
-```python
-OVERLAP_DURATION = 2  # Overlap between chunks
-```
+**Enable VAD** to filter silence and improve efficiency:
+- **Threshold**: Lower (0.2-0.3) = catch quiet speech, Higher (0.5-0.6) = ignore background noise
+- **Min Silence Duration**: How long to wait before considering speech ended
+  - 500-1000ms = Responsive, may cut off trailing words
+  - 1500-2000ms = Balanced (recommended)
+  - 2500ms+ = Patient, catches all speech
+
+### Chunk Duration vs Latency
+
+| Duration | Latency | Context | Best For |
+|----------|---------|---------|----------|
+| 3s | Low | Minimal | Real-time interaction |
+| 5s | Moderate | Good | Balanced |
+| 7s | Higher | Better | Recommended default |
+| 10-15s | High | Maximum | Quality transcription |
+
+### Microphone Gain
+
+Adjust based on your microphone sensitivity and environment:
+- **10-20x**: For sensitive microphones or loud environments
+- **30x**: Default, works well with INMP441
+- **40-50x**: For quiet microphones or distant speakers
 
 ## 9. Deactivating Virtual Environment
 
@@ -320,7 +479,7 @@ sudo systemctl start voice-transcribe.service
 # Activate environment
 source ~/voice_transcribe/venv/bin/activate
 
-# Run transcription
+# Run transcription (interactive mode)
 python transcribe.py
 
 # Test microphones
@@ -332,6 +491,20 @@ arecord -l
 # Deactivate environment
 deactivate
 ```
+
+### Interactive Menu Navigation
+
+- **Arrow Keys (↑/↓)**: Navigate options
+- **Enter**: Select option
+- **Ctrl+C**: Stop transcription and show performance stats
+
+### Quick Testing Strategy
+
+1. Start with **"Balanced"** preset - Test for 30-60 seconds
+2. If Speed Factor < 1.5x, try **"Fastest"** preset
+3. If Speed Factor > 2.0x, try **"Quality"** preset
+4. Use **"Custom"** to fine-tune specific parameters
+5. Compare transcription accuracy vs performance trade-offs
 
 ---
 
