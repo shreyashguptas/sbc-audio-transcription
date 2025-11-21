@@ -11,6 +11,7 @@ from scipy import signal
 from faster_whisper import WhisperModel
 import sys
 import re
+import os
 
 print('')
 print('='*60)
@@ -123,16 +124,45 @@ try:
         # Record
         audio_file = f'/tmp/seg_{segment_num}.wav'
 
-        # Silent recording (no progress messages to keep output clean)
-        subprocess.run(
+        # Record audio with error checking
+        result = subprocess.run(
             ['arecord', '-D', 'plughw:0,0', '-f', 'S16_LE',
              '-r', '48000', '-c', '2', '-d', str(CHUNK_DURATION), audio_file],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
         )
 
+        # Check if recording succeeded
+        if result.returncode != 0:
+            print(f"\nError: Recording failed!")
+            print(f"arecord error: {result.stderr}")
+            print("\nTroubleshooting:")
+            print("1. Check if microphones are wired correctly (see PINOUT.md)")
+            print("2. Verify I2S is enabled: dtparam i2s")
+            print("3. Test audio device: arecord -l")
+            print("4. Try manual recording: arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 3 test.wav")
+            sys.exit(1)
+
+        # Check if file exists and has content
+        if not os.path.exists(audio_file):
+            print(f"\nError: Audio file was not created: {audio_file}")
+            print("The recording command succeeded but no file was created.")
+            sys.exit(1)
+
+        if os.path.getsize(audio_file) == 0:
+            print(f"\nError: Audio file is empty: {audio_file}")
+            print("Recording succeeded but no audio data was captured.")
+            sys.exit(1)
+
         # Process audio
-        audio, sr = sf.read(audio_file)
+        try:
+            audio, sr = sf.read(audio_file)
+        except Exception as e:
+            print(f"\nError reading audio file: {e}")
+            print(f"File: {audio_file}")
+            print(f"File size: {os.path.getsize(audio_file)} bytes")
+            sys.exit(1)
         # Mix both LEFT and RIGHT channels for stereo audio capture
         audio = np.mean(audio, axis=1)  # Average both channels into mono
         audio = signal.resample(audio, int(len(audio) * 16000 / sr))
@@ -141,7 +171,6 @@ try:
         # Very lenient to catch trailing words in overlapping chunks
         if not has_sufficient_audio(audio):
             # Skip transcription for silence
-            import os
             try:
                 os.remove(audio_file)
             except:
@@ -178,7 +207,6 @@ try:
             
             # Skip if too few words (likely noise)
             if word_count < MIN_WORDS:
-                import os
                 try:
                     os.remove(audio_file)
                     os.remove(proc_file)
@@ -189,7 +217,6 @@ try:
             # Skip if it's a repetition of the last transcription
             if is_repetition(text, last_text):
                 # Detected repetition loop - skip this output
-                import os
                 try:
                     os.remove(audio_file)
                     os.remove(proc_file)
@@ -220,7 +247,6 @@ try:
                 last_words = text.split()
 
         # Cleanup
-        import os
         try:
             os.remove(audio_file)
             os.remove(proc_file)
