@@ -901,12 +901,6 @@ def run_transcription(config):
                         print(f"   Expected: {expected_size} bytes")
                         print(f"   Got: {mel.nbytes} bytes")
 
-                    # Ensure mel is C-contiguous before sending
-                    if not mel.flags['C_CONTIGUOUS']:
-                        print(f"DEBUG: Converting mel to C-contiguous array...")
-                        mel = np.ascontiguousarray(mel)
-                        print(f"DEBUG:   After conversion - C-contiguous: {mel.flags['C_CONTIGUOUS']}")
-
                     # Fix shape: Model expects 3D (batch, time, features), not 4D NHWC
                     # Convert (1, 1, 1000, 80) → (1, 1000, 80) by removing dimension at index 1
                     if mel.ndim == 4 and mel.shape[1] == 1:
@@ -914,8 +908,15 @@ def run_transcription(config):
                         mel = mel.squeeze(1)  # Remove dimension at index 1
                         print(f"DEBUG:   After squeeze - shape: {mel.shape}, nbytes: {mel.nbytes}")
 
+                    # CRITICAL: Create owned, C-contiguous copy for Hailo set_buffer()
+                    # The Hailo runtime requires arrays that own their data (OWNDATA=True)
+                    if not (mel.flags['C_CONTIGUOUS'] and mel.flags['OWNDATA']):
+                        print(f"DEBUG: Creating owned C-contiguous copy (OWNDATA={mel.flags['OWNDATA']})...")
+                        mel = np.ascontiguousarray(mel).copy()
+                        print(f"DEBUG:   After copy - C-contig: {mel.flags['C_CONTIGUOUS']}, OWNDATA: {mel.flags['OWNDATA']}")
+
                     try:
-                        print(f"DEBUG: Sending mel to pipeline (shape={mel.shape}, nbytes={mel.nbytes})...")
+                        print(f"DEBUG: Final mel - shape: {mel.shape}, nbytes: {mel.nbytes}, OWNDATA: {mel.flags['OWNDATA']}")
                         pipeline.send_data(mel)
                         time.sleep(0.1)  # Match official app delay
                         transcription = pipeline.get_transcription()
