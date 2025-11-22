@@ -58,13 +58,14 @@ class HailoTranscriptionConfig:
         self.model_variant = 'base'  # tiny or base
 
         # Audio hardware configuration
+        # Default: INMP441 I2S microphones (2 mics in stereo)
         # Adjust these to match your microphone hardware capabilities:
+        # - INMP441 I2S (2 mics): sample_rate=48000, channels=2 (default)
         # - Google Voice HAT: sample_rate=16000, channels=1
-        # - INMP441 I2S (2 mics): sample_rate=48000, channels=2
         # - USB microphone: sample_rate=44100, channels=1
         # Test with: arecord --dump-hw-params -D plughw:0,0
-        self.audio_sample_rate = 16000  # Sample rate in Hz
-        self.audio_channels = 1         # 1=mono, 2=stereo
+        self.audio_sample_rate = 48000  # Sample rate in Hz
+        self.audio_channels = 2         # 1=mono, 2=stereo
 
         # Audio processing (kept from original)
         self.chunk_duration = 5  # Base model works best with 5s chunks

@@ -173,11 +173,11 @@ Look for these lines in the output:
 Try recording a 3-second test file:
 
 ```bash
-# For Google Voice HAT (typically 16kHz mono):
-arecord -D plughw:0,0 -f S16_LE -r 16000 -c 1 -d 3 test.wav
-
-# For INMP441 I2S mics (typically 48kHz stereo):
+# For INMP441 I2S mics (48kHz stereo) - DEFAULT:
 arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 3 test.wav
+
+# For Google Voice HAT (16kHz mono):
+arecord -D plughw:0,0 -f S16_LE -r 16000 -c 1 -d 3 test.wav
 
 # Play back to verify
 aplay test.wav
@@ -189,8 +189,8 @@ aplay test.wav
 
 | Hardware | Sample Rate | Channels | arecord Command |
 |----------|------------|----------|-----------------|
+| **INMP441 I2S (2 mics)** | 48000 Hz | 2 (stereo) | `arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2` **(default)** |
 | **Google Voice HAT** | 16000 Hz | 1 (mono) | `arecord -D plughw:0,0 -f S16_LE -r 16000 -c 1` |
-| **INMP441 I2S (2 mics)** | 48000 Hz | 2 (stereo) | `arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2` |
 | **USB Microphone** | 44100 Hz | 1 (mono) | `arecord -D plughw:1,0 -f S16_LE -r 44100 -c 1` |
 
 ---
@@ -428,22 +428,27 @@ result = subprocess.run(
 
 ### Update for Your Hardware
 
-**For Google Voice HAT (16kHz mono):**
-Change line ~483 to:
+**The script is pre-configured for INMP441 I2S microphones (48kHz stereo).** If you have different hardware, update the configuration:
+
+**For INMP441 I2S mics (48kHz stereo) - DEFAULT:**
+No changes needed! Lines 67-68 are already set correctly:
 ```python
-     '-r', '16000', '-c', '1', '-d', str(config.chunk_duration), audio_file],
+self.audio_sample_rate = 48000  # 48kHz
+self.audio_channels = 2         # Stereo
 ```
 
-**For INMP441 I2S mics (48kHz stereo):**
-Keep as is:
+**For Google Voice HAT (16kHz mono):**
+Change lines 67-68 to:
 ```python
-     '-r', '48000', '-c', '2', '-d', str(config.chunk_duration), audio_file],
+self.audio_sample_rate = 16000  # 16kHz
+self.audio_channels = 1         # Mono
 ```
 
 **For USB microphone (44.1kHz mono):**
-Change line ~483 to:
+Change lines 67-68 to:
 ```python
-     '-r', '44100', '-c', '1', '-d', str(config.chunk_duration), audio_file],
+self.audio_sample_rate = 44100  # 44.1kHz
+self.audio_channels = 1         # Mono
 ```
 
 **Note:** The script will automatically handle resampling to 16kHz (Whisper requirement) and channel mixing. You just need to match what your hardware supports for recording.
@@ -457,8 +462,8 @@ Before running the full script, test that audio recording works:
 cd ~/sbc-audio-transcription/raspberry-pi-5
 source venv/bin/activate
 
-# Test recording (adjust -r and -c to match your hardware)
-arecord -D plughw:0,0 -f S16_LE -r 16000 -c 1 -d 3 test.wav
+# Test recording with INMP441 (default config)
+arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 3 test.wav
 
 # Play back
 aplay test.wav
@@ -628,11 +633,11 @@ pip install -r requirements.txt
 
 2. Test recording with supported parameters:
    ```bash
-   # Try 16kHz mono (Google Voice HAT)
-   arecord -D plughw:0,0 -f S16_LE -r 16000 -c 1 -d 3 test.wav
-
-   # Or try 48kHz stereo (INMP441)
+   # Try 48kHz stereo (INMP441 - default)
    arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 3 test.wav
+
+   # Or try 16kHz mono (Google Voice HAT)
+   arecord -D plughw:0,0 -f S16_LE -r 16000 -c 1 -d 3 test.wav
    ```
 
 3. Update `transcribe-halo.py` line ~483 to match working parameters.
@@ -818,8 +823,8 @@ arecord -l
 # Test what formats hardware supports
 arecord --dump-hw-params -D plughw:0,0
 
-# Test recording (adjust -r and -c for your hardware)
-arecord -D plughw:0,0 -f S16_LE -r 16000 -c 1 -d 3 test.wav
+# Test recording with INMP441 (default: 48kHz stereo)
+arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 3 test.wav
 
 # Play back recorded audio
 aplay test.wav
