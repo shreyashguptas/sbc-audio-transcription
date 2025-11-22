@@ -57,6 +57,15 @@ class HailoTranscriptionConfig:
         self.hw_arch = 'hailo8l'  # hailo8l for Raspberry Pi 5
         self.model_variant = 'base'  # tiny or base
 
+        # Audio hardware configuration
+        # Adjust these to match your microphone hardware capabilities:
+        # - Google Voice HAT: sample_rate=16000, channels=1
+        # - INMP441 I2S (2 mics): sample_rate=48000, channels=2
+        # - USB microphone: sample_rate=44100, channels=1
+        # Test with: arecord --dump-hw-params -D plughw:0,0
+        self.audio_sample_rate = 16000  # Sample rate in Hz
+        self.audio_channels = 1         # 1=mono, 2=stereo
+
         # Audio processing (kept from original)
         self.chunk_duration = 5  # Base model works best with 5s chunks
         self.overlap_duration = 2
@@ -79,6 +88,11 @@ class HailoTranscriptionConfig:
         print(f'  Hardware Architecture: {self.hw_arch.upper()}')
         print(f'  Whisper Model Variant: {self.model_variant}')
         print(f'  Expected Chunk Duration: {self.chunk_duration}s')
+        print('')
+        print('AUDIO HARDWARE:')
+        channel_mode = 'mono' if self.audio_channels == 1 else 'stereo'
+        print(f'  Sample Rate: {self.audio_sample_rate} Hz')
+        print(f'  Channels: {self.audio_channels} ({channel_mode})')
         print('')
         print('AUDIO PROCESSING:')
         print(f'  Chunk Duration: {self.chunk_duration}s')
@@ -475,12 +489,13 @@ def run_transcription(config):
         while True:
             segment_num += 1
 
-            # Record audio from INMP441 microphones
+            # Record audio using configured hardware parameters
             audio_file = f'/tmp/seg_{segment_num}.wav'
 
             result = subprocess.run(
                 ['arecord', '-D', 'plughw:0,0', '-f', 'S16_LE',
-                 '-r', '48000', '-c', '2', '-d', str(config.chunk_duration), audio_file],
+                 '-r', str(config.audio_sample_rate), '-c', str(config.audio_channels),
+                 '-d', str(config.chunk_duration), audio_file],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
@@ -491,10 +506,13 @@ def run_transcription(config):
                 print(f"\n❌ Error: Recording failed!")
                 print(f"arecord error: {result.stderr}")
                 print("\nTroubleshooting:")
-                print("1. Check if microphones are wired correctly (see PINOUT.md)")
-                print("2. Verify I2S is enabled: dtparam i2s")
-                print("3. Test audio device: arecord -l")
-                print("4. Try manual recording: arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 3 test.wav")
+                print("1. Check audio hardware capabilities: arecord --dump-hw-params -D plughw:0,0")
+                print("2. Test your audio device: arecord -l")
+                print(f"3. Try manual recording with current config:")
+                print(f"   arecord -D plughw:0,0 -f S16_LE -r {config.audio_sample_rate} -c {config.audio_channels} -d 3 test.wav")
+                print(f"4. If recording fails, update audio_sample_rate and audio_channels in")
+                print(f"   HailoTranscriptionConfig class (line ~66-67) to match your hardware")
+                print("5. See HAILO_SETUP.md Step 7 for audio configuration help")
                 pipeline.stop()
                 sys.exit(1)
 
