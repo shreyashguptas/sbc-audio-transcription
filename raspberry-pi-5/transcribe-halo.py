@@ -58,14 +58,17 @@ class HailoTranscriptionConfig:
         self.model_variant = 'base'  # tiny or base
 
         # Audio hardware configuration
-        # Default: INMP441 I2S microphones (2 mics in stereo)
-        # Adjust these to match your microphone hardware capabilities:
-        # - INMP441 I2S (2 mics): sample_rate=48000, channels=2 (default)
-        # - Google Voice HAT: sample_rate=16000, channels=1
-        # - USB microphone: sample_rate=44100, channels=1
-        # Test with: arecord --dump-hw-params -D plughw:0,0
-        self.audio_sample_rate = 48000  # Sample rate in Hz
-        self.audio_channels = 2         # 1=mono, 2=stereo
+        # Configured for: Seeed 2-mic voicecard driver (dual INMP441 I2S microphones)
+        # Driver overlays in /boot/firmware/config.txt:
+        #   - dtoverlay=googlevoicehat-soundcard,alsaname=seeed-2mic-voicecard
+        #   - dtoverlay=i2s-mmap
+        #
+        # This configuration uses both INMP441 microphones in stereo mode at 48kHz,
+        # which provides better audio quality for transcription.
+        #
+        # Current configuration (Seeed 2-mic driver with dual INMP441 mics):
+        self.audio_sample_rate = 48000  # Sample rate in Hz (INMP441 native capability)
+        self.audio_channels = 2         # Stereo - uses both left and right INMP441 mics
 
         # Audio processing (kept from original)
         self.chunk_duration = 5  # Base model works best with 5s chunks
@@ -440,12 +443,14 @@ def detect_audio_devices():
     return True
 
 
-def check_audio_hardware_params(device='plughw:0,0'):
+def check_audio_hardware_params(device='plughw:0,0', sample_rate=48000, channels=2):
     """
     Check hardware parameters supported by the audio device.
 
     Args:
         device: ALSA device name (default: 'plughw:0,0')
+        sample_rate: Sample rate to test (default: 48000)
+        channels: Number of channels to test (default: 2)
 
     Returns:
         bool: True if device supports required format, False otherwise
@@ -455,26 +460,41 @@ def check_audio_hardware_params(device='plughw:0,0'):
     print('='*70)
     print('')
     print('Checking supported audio formats...')
+    print(f'  Testing: {sample_rate}Hz, {channels} channel(s), S16_LE format')
     print('')
 
-    result = subprocess.run(
-        ['arecord', '--dump-hw-params', '-D', device],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=5
-    )
+    try:
+        result = subprocess.run(
+            ['arecord', '--dump-hw-params', '-D', device,
+             '-f', 'S16_LE', '-r', str(sample_rate), '-c', str(channels)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5
+        )
 
-    if result.returncode != 0:
-        print(f'❌ Error: Could not query device {device}')
-        print(f'stderr: {result.stderr}')
-        print(f'stdout: {result.stdout}')
+        if result.returncode != 0:
+            print(f'❌ Error: Could not query device {device}')
+            print(f'stderr: {result.stderr}')
+            print(f'stdout: {result.stdout}')
+            return False
+
+        print(result.stdout)
+        print(result.stderr)
+        return True
+
+    except subprocess.TimeoutExpired:
+        print('❌ Error: Hardware capability check timed out after 5 seconds')
+        print('')
+        print('This typically happens with I2S microphones when:')
+        print('  - The audio device expects specific parameters')
+        print('  - The driver is not properly configured')
+        print('  - Hardware connections are incorrect')
+        print('')
+        print('Skipping hardware capability check...')
+        print('The actual recording test will verify if audio works.')
+        print('')
         return False
-
-    print(result.stdout)
-    print(result.stderr)
-
-    return True
 
 
 def test_audio_recording(config, device='plughw:0,0'):
@@ -642,7 +662,7 @@ def run_transcription(config):
 
     # Step 2: Check hardware capabilities
     print('')
-    if not check_audio_hardware_params('plughw:0,0'):
+    if not check_audio_hardware_params('plughw:0,0', config.audio_sample_rate, config.audio_channels):
         print('')
         print('⚠️  Warning: Could not check hardware capabilities')
         print('Proceeding anyway...')
