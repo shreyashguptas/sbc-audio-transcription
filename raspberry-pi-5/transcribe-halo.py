@@ -908,15 +908,14 @@ def run_transcription(config):
                         mel = mel.squeeze(1)  # Remove dimension at index 1
                         print(f"DEBUG:   After squeeze - shape: {mel.shape}, nbytes: {mel.nbytes}")
 
-                    # CRITICAL: Create owned, C-contiguous copy for Hailo set_buffer()
-                    # The Hailo runtime requires arrays that own their data (OWNDATA=True)
-                    if not (mel.flags['C_CONTIGUOUS'] and mel.flags['OWNDATA']):
-                        print(f"DEBUG: Creating owned C-contiguous copy (OWNDATA={mel.flags['OWNDATA']})...")
-                        mel = np.ascontiguousarray(mel).copy()
-                        print(f"DEBUG:   After copy - C-contig: {mel.flags['C_CONTIGUOUS']}, OWNDATA: {mel.flags['OWNDATA']}")
+                    # CRITICAL: Ensure C-contiguous layout (matches official Hailo pipeline)
+                    # ascontiguousarray creates a copy only if needed
+                    print(f"DEBUG: Before ascontiguousarray - C-contig: {mel.flags['C_CONTIGUOUS']}, OWNDATA: {mel.flags['OWNDATA']}")
+                    mel = np.ascontiguousarray(mel)
+                    print(f"DEBUG: After ascontiguousarray - C-contig: {mel.flags['C_CONTIGUOUS']}, OWNDATA: {mel.flags['OWNDATA']}")
 
                     try:
-                        print(f"DEBUG: Final mel - shape: {mel.shape}, nbytes: {mel.nbytes}, OWNDATA: {mel.flags['OWNDATA']}")
+                        print(f"DEBUG: Final mel - shape: {mel.shape}, dtype: {mel.dtype}, nbytes: {mel.nbytes}")
                         pipeline.send_data(mel)
                         time.sleep(0.1)  # Match official app delay
                         transcription = pipeline.get_transcription()
