@@ -396,6 +396,209 @@ def get_hef_paths(config):
         sys.exit(1)
 
 
+def detect_audio_devices():
+    """
+    Detect and display available audio recording devices.
+
+    Returns:
+        bool: True if at least one device found, False otherwise
+    """
+    print('')
+    print('='*70)
+    print('  AUDIO DEVICE DETECTION')
+    print('='*70)
+    print('')
+
+    # List all audio devices
+    print('Detecting audio recording devices...')
+    print('')
+    result = subprocess.run(
+        ['arecord', '-l'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+
+    if result.returncode != 0:
+        print('❌ Error: Could not list audio devices')
+        print(f'Error: {result.stderr}')
+        return False
+
+    print(result.stdout)
+
+    # Check if any devices were found
+    if 'no soundcards found' in result.stdout.lower():
+        print('❌ No audio recording devices found!')
+        print('')
+        print('Troubleshooting:')
+        print('1. Check microphone wiring (see PINOUT.md)')
+        print('2. Verify I2S is enabled: dtparam i2s')
+        print('3. Check kernel modules: lsmod | grep snd')
+        print('4. Reboot and try again')
+        return False
+
+    return True
+
+
+def check_audio_hardware_params(device='plughw:0,0'):
+    """
+    Check hardware parameters supported by the audio device.
+
+    Args:
+        device: ALSA device name (default: 'plughw:0,0')
+
+    Returns:
+        bool: True if device supports required format, False otherwise
+    """
+    print('='*70)
+    print(f'  HARDWARE CAPABILITIES: {device}')
+    print('='*70)
+    print('')
+    print('Checking supported audio formats...')
+    print('')
+
+    result = subprocess.run(
+        ['arecord', '--dump-hw-params', '-D', device],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=5
+    )
+
+    if result.returncode != 0:
+        print(f'❌ Error: Could not query device {device}')
+        print(f'stderr: {result.stderr}')
+        print(f'stdout: {result.stdout}')
+        return False
+
+    print(result.stdout)
+    print(result.stderr)
+
+    return True
+
+
+def test_audio_recording(config, device='plughw:0,0'):
+    """
+    Perform a test recording to verify audio configuration works.
+
+    Args:
+        config: HailoTranscriptionConfig object
+        device: ALSA device name (default: 'plughw:0,0')
+
+    Returns:
+        bool: True if test recording succeeded, False otherwise
+    """
+    print('='*70)
+    print('  PRE-FLIGHT AUDIO TEST')
+    print('='*70)
+    print('')
+    print('Testing audio recording with your configuration...')
+    print(f'  Device: {device}')
+    print(f'  Format: S16_LE')
+    print(f'  Sample Rate: {config.audio_sample_rate} Hz')
+    print(f'  Channels: {config.audio_channels}')
+    print(f'  Duration: 1 second')
+    print('')
+
+    test_file = '/tmp/audio_test.wav'
+
+    # Build the exact command we'll use
+    cmd = [
+        'arecord',
+        '-D', device,
+        '-f', 'S16_LE',
+        '-r', str(config.audio_sample_rate),
+        '-c', str(config.audio_channels),
+        '-d', '1',
+        test_file
+    ]
+
+    print('Running command:')
+    print('  ' + ' '.join(cmd))
+    print('')
+
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10
+        )
+
+        print('--- arecord stdout ---')
+        if result.stdout:
+            print(result.stdout)
+        else:
+            print('(empty)')
+        print('')
+
+        print('--- arecord stderr ---')
+        if result.stderr:
+            print(result.stderr)
+        else:
+            print('(empty)')
+        print('')
+
+        if result.returncode != 0:
+            print('❌ Test recording FAILED!')
+            print(f'Return code: {result.returncode}')
+            print('')
+            print('Common issues:')
+            print('1. Device does not support the requested sample rate or channels')
+            print('2. Audio device is busy (close other audio applications)')
+            print('3. I2S driver not loaded or microphone not connected')
+            print('')
+            print('Suggested fixes:')
+            print('1. Run: arecord --dump-hw-params -D plughw:0,0')
+            print('   to see supported formats')
+            print('2. Update audio_sample_rate and audio_channels in')
+            print('   HailoTranscriptionConfig (line ~67-68) to match')
+            print('3. Check HAILO_SETUP.md Step 7 for configuration guide')
+
+            # Cleanup
+            try:
+                os.remove(test_file)
+            except:
+                pass
+
+            return False
+
+        # Check file was created
+        if not os.path.exists(test_file):
+            print('❌ Test recording failed: file not created')
+            return False
+
+        file_size = os.path.getsize(test_file)
+        if file_size == 0:
+            print('❌ Test recording failed: file is empty')
+            os.remove(test_file)
+            return False
+
+        print(f'✓ Test recording SUCCEEDED!')
+        print(f'  File size: {file_size} bytes')
+        print(f'  File: {test_file}')
+        print('')
+
+        # Cleanup
+        try:
+            os.remove(test_file)
+        except:
+            pass
+
+        return True
+
+    except subprocess.TimeoutExpired:
+        print('❌ Test recording timed out!')
+        print('The audio device may be unresponsive or misconfigured.')
+        return False
+    except Exception as e:
+        print(f'❌ Test recording error: {e}')
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def preprocess_audio_for_hailo(audio_file, config):
     """
     Preprocess audio file for Hailo inference.
@@ -430,6 +633,33 @@ def preprocess_audio_for_hailo(audio_file, config):
 
 def run_transcription(config):
     """Run transcription with configured parameters"""
+
+    # Step 1: Detect audio devices
+    if not detect_audio_devices():
+        print('')
+        print('❌ Cannot proceed without audio devices!')
+        sys.exit(1)
+
+    # Step 2: Check hardware capabilities
+    print('')
+    if not check_audio_hardware_params('plughw:0,0'):
+        print('')
+        print('⚠️  Warning: Could not check hardware capabilities')
+        print('Proceeding anyway...')
+        print('')
+
+    # Step 3: Test recording with user's configuration
+    print('')
+    if not test_audio_recording(config, 'plughw:0,0'):
+        print('')
+        print('❌ Pre-flight audio test FAILED!')
+        print('Cannot proceed until audio recording is working.')
+        print('')
+        print('Please fix the audio configuration and try again.')
+        sys.exit(1)
+
+    print('✓ Audio system check complete!')
+    print('')
 
     print('')
     print('='*70)
@@ -493,10 +723,24 @@ def run_transcription(config):
             # Record audio using configured hardware parameters
             audio_file = f'/tmp/seg_{segment_num}.wav'
 
+            # Build command
+            cmd = [
+                'arecord',
+                '-D', 'plughw:0,0',
+                '-f', 'S16_LE',
+                '-r', str(config.audio_sample_rate),
+                '-c', str(config.audio_channels),
+                '-d', str(config.chunk_duration),
+                audio_file
+            ]
+
+            # Show command for first recording
+            if segment_num == 1:
+                print(f"DEBUG: Recording command: {' '.join(cmd)}")
+                print('')
+
             result = subprocess.run(
-                ['arecord', '-D', 'plughw:0,0', '-f', 'S16_LE',
-                 '-r', str(config.audio_sample_rate), '-c', str(config.audio_channels),
-                 '-d', str(config.chunk_duration), audio_file],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
@@ -505,14 +749,24 @@ def run_transcription(config):
             # Check if recording succeeded
             if result.returncode != 0:
                 print(f"\n❌ Error: Recording failed!")
-                print(f"arecord error: {result.stderr}")
+                print(f"Return code: {result.returncode}")
+                print('')
+                print('--- Full Command ---')
+                print(' '.join(cmd))
+                print('')
+                print('--- stderr output ---')
+                print(result.stderr)
+                print('')
+                print('--- stdout output ---')
+                print(result.stdout if result.stdout else '(empty)')
+                print('')
                 print("\nTroubleshooting:")
                 print("1. Check audio hardware capabilities: arecord --dump-hw-params -D plughw:0,0")
                 print("2. Test your audio device: arecord -l")
                 print(f"3. Try manual recording with current config:")
                 print(f"   arecord -D plughw:0,0 -f S16_LE -r {config.audio_sample_rate} -c {config.audio_channels} -d 3 test.wav")
                 print(f"4. If recording fails, update audio_sample_rate and audio_channels in")
-                print(f"   HailoTranscriptionConfig class (line ~66-67) to match your hardware")
+                print(f"   HailoTranscriptionConfig class (line ~67-68) to match your hardware")
                 print("5. See HAILO_SETUP.md Step 7 for audio configuration help")
                 pipeline.stop()
                 sys.exit(1)
@@ -520,16 +774,29 @@ def run_transcription(config):
             # Check if file exists and has content
             if not os.path.exists(audio_file):
                 print(f"\n❌ Error: Audio file was not created: {audio_file}")
+                print(f"The arecord command returned success (code 0) but file doesn't exist!")
+                print(f"This is very unusual - possibly a permissions or filesystem issue.")
                 pipeline.stop()
                 sys.exit(1)
 
             file_size = os.path.getsize(audio_file)
             if file_size == 0:
                 print(f"\n❌ Error: Audio file is empty: {audio_file}")
+                print(f"The arecord command returned success but created an empty file!")
+                print(f"This may indicate a driver or hardware issue.")
                 pipeline.stop()
                 sys.exit(1)
 
-            print(f"DEBUG: Recorded audio file size: {file_size} bytes")
+            # Show recording success (for first 3 recordings to verify it's working)
+            if segment_num <= 3:
+                expected_size = config.audio_sample_rate * config.audio_channels * 2 * config.chunk_duration
+                print(f"✓ Recording #{segment_num} successful: {file_size} bytes (expected ~{expected_size} bytes)")
+
+            # Always show debug file size
+            if segment_num == 1:
+                print(f"DEBUG: S16_LE format = 2 bytes per sample")
+                print(f"DEBUG: Expected size = {config.audio_sample_rate} Hz × {config.audio_channels} ch × 2 bytes × {config.chunk_duration}s = ~{config.audio_sample_rate * config.audio_channels * 2 * config.chunk_duration} bytes")
+                print('')
 
             total_audio_duration += config.chunk_duration
 
