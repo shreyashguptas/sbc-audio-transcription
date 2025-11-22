@@ -885,7 +885,10 @@ def run_transcription(config):
                 # Process each mel spectrogram chunk
                 text_chunks = []
                 for i, mel in enumerate(mel_spectrograms):
-                    print(f"DEBUG: Mel {i}: shape={mel.shape}, dtype={mel.dtype}, size={mel.size} bytes")
+                    print(f"DEBUG: Mel {i}: shape={mel.shape}, dtype={mel.dtype}")
+                    print(f"DEBUG:   Elements: {mel.size}, Bytes: {mel.nbytes}")
+                    print(f"DEBUG:   C-contiguous: {mel.flags['C_CONTIGUOUS']}, F-contiguous: {mel.flags['F_CONTIGUOUS']}")
+                    print(f"DEBUG:   Memory layout: {mel.flags}")
 
                     if mel.size == 0:
                         print(f"\n⚠️  WARNING: Mel {i} is empty, skipping!")
@@ -893,14 +896,21 @@ def run_transcription(config):
 
                     # Expected size for tiny-10s model: 320,000 bytes (80 x 1000 x 4)
                     expected_size = 320000 if config.model_variant == 'tiny' else 160000
-                    if mel.size * mel.itemsize != expected_size:
+                    if mel.nbytes != expected_size:
                         print(f"\n⚠️  WARNING: Mel size mismatch!")
                         print(f"   Expected: {expected_size} bytes")
-                        print(f"   Got: {mel.size * mel.itemsize} bytes")
+                        print(f"   Got: {mel.nbytes} bytes")
+
+                    # Ensure mel is C-contiguous before sending
+                    if not mel.flags['C_CONTIGUOUS']:
+                        print(f"DEBUG: Converting mel to C-contiguous array...")
+                        mel = np.ascontiguousarray(mel)
+                        print(f"DEBUG:   After conversion - C-contiguous: {mel.flags['C_CONTIGUOUS']}")
 
                     try:
+                        print(f"DEBUG: Sending mel to pipeline (shape={mel.shape}, nbytes={mel.nbytes})...")
                         pipeline.send_data(mel)
-                        time.sleep(0.05)  # Small delay for processing
+                        time.sleep(0.1)  # Match official app delay
                         transcription = pipeline.get_transcription()
                         if transcription:
                             # Clean transcription using official postprocessing
