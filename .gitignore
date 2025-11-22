@@ -3,3 +3,6 @@ __pycache__/
 __pycache__
 
 .DS_Store
+
+*.Claude.md
+Claude.md
