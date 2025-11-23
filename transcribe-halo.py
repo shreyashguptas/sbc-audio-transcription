@@ -217,24 +217,9 @@ def main():
 
             # Process through pipeline
             for i, mel in enumerate(mel_spectrograms):
-                print(f"\n[Mel {i+1}] Original shape: {mel.shape}, dtype: {mel.dtype}")
-                print(f"  C-contiguous: {mel.flags['C_CONTIGUOUS']}, Owns data: {mel.flags['OWNDATA']}")
-
-                # CRITICAL FIX: Encoder expects 3D input (1, 1000, 80), not 4D!
-                # preprocess() returns (1, 1, 1000, 80) in NHWC format
-                # We need to squeeze out the batch dimension (axis=1)
-                if mel.shape == (1, 1, 1000, 80):
-                    mel = np.squeeze(mel, axis=1)  # (1, 1, 1000, 80) → (1, 1000, 80)
-                    print(f"  Squeezed to: {mel.shape}")
-
-                # Force a copy to ensure C-contiguous and data ownership
-                mel_contiguous = np.ascontiguousarray(mel.copy(), dtype=np.float32)
-
-                print(f"  Final shape: {mel_contiguous.shape}")
-                print(f"  C-contiguous: {mel_contiguous.flags['C_CONTIGUOUS']}, Owns data: {mel_contiguous.flags['OWNDATA']}")
-
-                # Send to pipeline
-                pipeline.send_data(mel_contiguous)
+                # Send mel directly as-is, matching official implementation
+                # Official example sends (1, 1, 1000, 80) directly
+                pipeline.send_data(mel)
 
                 # Small delay as in official example
                 time.sleep(0.1)
