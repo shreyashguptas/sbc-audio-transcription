@@ -20,12 +20,17 @@ from app.whisper_hef_registry import HEF_REGISTRY
 
 def get_hef_path(model_variant: str, hw_arch: str, component: str) -> str:
     """Get HEF file path from registry"""
+    base_path = os.path.expanduser('~/Hailo-Application-Code-Examples/runtime/hailo-8/python/speech_recognition')
+
     try:
-        hef_path = HEF_REGISTRY[model_variant][hw_arch][component]
+        relative_path = HEF_REGISTRY[model_variant][hw_arch][component]
     except KeyError as e:
         raise FileNotFoundError(
             f"HEF not available for model '{model_variant}' on hardware '{hw_arch}'."
         ) from e
+
+    # Convert relative path to absolute
+    hef_path = os.path.join(base_path, relative_path)
 
     if not os.path.exists(hef_path):
         raise FileNotFoundError(f"HEF file not found at: {hef_path}")
