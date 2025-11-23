@@ -901,12 +901,9 @@ def run_transcription(config):
                         print(f"   Expected: {expected_size} bytes")
                         print(f"   Got: {mel.nbytes} bytes")
 
-                    # Fix shape: Model expects 3D (batch, time, features), not 4D NHWC
-                    # Convert (1, 1, 1000, 80) → (1, 1000, 80) by removing dimension at index 1
-                    if mel.ndim == 4 and mel.shape[1] == 1:
-                        print(f"DEBUG: Removing extra dimension from NHWC format...")
-                        mel = mel.squeeze(1)  # Remove dimension at index 1
-                        print(f"DEBUG:   After squeeze - shape: {mel.shape}, nbytes: {mel.nbytes}")
+                    # Keep mel spectrogram in 4D NHWC format as expected by Hailo
+                    # The encoder expects (batch=1, height=1, width=1000, channels=80) format
+                    # DO NOT squeeze dimensions - Hailo needs the full 4D tensor
 
                     # CRITICAL: Ensure C-contiguous layout (matches official Hailo pipeline)
                     # ascontiguousarray creates a copy only if needed
