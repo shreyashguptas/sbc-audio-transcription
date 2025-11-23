@@ -216,13 +216,19 @@ def main():
                 continue
 
             # Process through pipeline
-            for mel in mel_spectrograms:
-                # Squeeze out extra dimension (from 4D to 3D)
-                # mel shape changes from (1, 1, 1000, 80) to (1, 1000, 80)
-                mel_3d = np.squeeze(mel, axis=1)
+            for i, mel in enumerate(mel_spectrograms):
+                print(f"\n[Mel {i+1}] shape: {mel.shape}, dtype: {mel.dtype}, size: {mel.nbytes}")
+                print(f"  Dimensions: {mel.ndim}D array")
+                print(f"  C-contiguous: {mel.flags['C_CONTIGUOUS']}")
+                print(f"  F-contiguous: {mel.flags['F_CONTIGUOUS']}")
+                print(f"  Owns data: {mel.flags['OWNDATA']}")
+
+                # Try passing directly like the official example
+                # Don't squeeze or modify - pass as-is
+                print("  Sending to pipeline as-is...")
 
                 # Send to pipeline
-                pipeline.send_data(mel_3d)
+                pipeline.send_data(mel)
 
                 # Small delay as in official example
                 time.sleep(0.1)
