@@ -166,12 +166,10 @@ def main():
 
         # Create pipeline
         pipeline = HailoWhisperPipeline(
-            encoder_path=encoder_path,
-            decoder_path=decoder_path,
-            decoder_assets_path=Config.decoder_dir,
-            tokenizer='openai/whisper-tiny',
-            hw_arch=Config.hw_arch,
-            timeout_ms=10000
+            encoder_model_path=encoder_path,
+            decoder_model_path=decoder_path,
+            variant=Config.model_variant,
+            host="arm64"
         )
         print("✓ Pipeline initialized")
 
