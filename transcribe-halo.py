@@ -22,7 +22,7 @@ try:
     # Import Hailo modules
     from app.hailo_whisper_pipeline import HailoWhisperPipeline
     from common.audio_utils import load_audio
-    from common.preprocessing import preprocess
+    from common.preprocessing import preprocess, improve_input_audio, detect_first_speech
     from common.postprocessing import clean_transcription as postprocess_text
 except ImportError as e:
     print(f"❌ Error importing Hailo modules: {e}")
@@ -43,6 +43,15 @@ class Config:
         self.sample_rate = 48000
         self.channels = 2
 
+        # Audio preprocessing
+        self.enable_vad = True  # Voice Activity Detection
+        self.enable_auto_gain = True  # Automatic gain control for quiet audio
+        self.vad_threshold = 0.2  # Energy threshold for speech detection (0.0-1.0)
+        self.chunk_overlap = 0.2  # 20% overlap between chunks for smoother boundaries
+
+        # Debug settings
+        self.debug_mode = False  # Enable detailed logging
+
         # Paths (h8l is the directory name for hailo8l)
         self.hef_dir = os.path.join(hailo_path, 'app', 'hefs', 'h8l')
         self.decoder_dir = os.path.join(hailo_path, 'app', 'decoder_assets')
@@ -62,17 +71,71 @@ class Config:
         print(f'  Model Variant: {self.model_variant}')
         print(f'  Hardware: {self.hw_arch} (Hailo-8L)')
         print(f'  Chunk Duration: {self.chunk_duration}s')
+        print(f'  Chunk Overlap: {self.chunk_overlap*100:.0f}%')
         print('')
         print('AUDIO SETTINGS:')
         print(f'  Device: {self.device}')
         print(f'  Sample Rate: {self.sample_rate} Hz')
         print(f'  Channels: {self.channels} (stereo)')
+        print('')
+        print('PREPROCESSING:')
+        print(f'  Voice Activity Detection: {"Enabled" if self.enable_vad else "Disabled"}')
+        print(f'  Auto Gain Control: {"Enabled" if self.enable_auto_gain else "Disabled"}')
+        if self.enable_vad:
+            print(f'  VAD Threshold: {self.vad_threshold}')
+        print('')
+        print('DEBUG MODE:', 'Enabled' if self.debug_mode else 'Disabled')
         print('='*70)
         print('')
 
 # Global variable for clean shutdown
 running = True
 pipeline = None
+
+class ContextTracker:
+    """Track transcription context across chunks for visual continuity"""
+
+    def __init__(self):
+        self.incomplete_buffer = ""  # Text from previous chunk without terminal punctuation
+
+    def process_transcription(self, text):
+        """
+        Process transcription text with context from previous chunks.
+
+        Returns:
+            tuple: (display_text, is_continuation)
+                - display_text: Text to show (includes buffered context if any)
+                - is_continuation: True if this chunk continues previous incomplete sentence
+        """
+        if not text:
+            return "", False
+
+        is_continuation = bool(self.incomplete_buffer)
+
+        # Prepend incomplete buffer to current text
+        if self.incomplete_buffer:
+            full_text = self.incomplete_buffer + " " + text
+        else:
+            full_text = text
+
+        # Check if current text ends with terminal punctuation
+        terminal_punctuation = {'.', '!', '?'}
+        has_terminal = text.strip() and text.strip()[-1] in terminal_punctuation
+
+        if has_terminal:
+            # Sentence is complete, clear buffer
+            self.incomplete_buffer = ""
+            display_text = full_text
+        else:
+            # Sentence is incomplete, buffer for next chunk
+            self.incomplete_buffer = full_text
+            display_text = full_text + "..."  # Visual indicator of incompleteness
+
+        return display_text, is_continuation
+
+    def reset(self):
+        """Clear the context buffer"""
+        self.incomplete_buffer = ""
 
 def signal_handler(signum, frame):
     """Handle Ctrl+C gracefully"""
@@ -223,6 +286,62 @@ def menu_audio_device(config):
         if custom_device:
             config.device = custom_device
 
+def menu_advanced_options(config):
+    """Advanced configuration menu"""
+    options = [
+        f"Debug Mode: {'Enabled' if config.debug_mode else 'Disabled'}",
+        f"Voice Activity Detection: {'Enabled' if config.enable_vad else 'Disabled'}",
+        f"Auto Gain Control: {'Enabled' if config.enable_auto_gain else 'Disabled'}",
+        f"VAD Threshold: {config.vad_threshold}",
+        f"Chunk Overlap: {config.chunk_overlap*100:.0f}%",
+        "Done (continue)"
+    ]
+
+    while True:
+        menu = TerminalMenu(
+            options,
+            title="Advanced Options:",
+            menu_cursor="→ ",
+            menu_cursor_style=("fg_cyan", "bold"),
+            menu_highlight_style=("bg_cyan", "fg_black")
+        )
+
+        choice = menu.show()
+
+        if choice == 0:  # Toggle debug mode
+            config.debug_mode = not config.debug_mode
+            options[0] = f"Debug Mode: {'Enabled' if config.debug_mode else 'Disabled'}"
+        elif choice == 1:  # Toggle VAD
+            config.enable_vad = not config.enable_vad
+            options[1] = f"Voice Activity Detection: {'Enabled' if config.enable_vad else 'Disabled'}"
+        elif choice == 2:  # Toggle auto gain
+            config.enable_auto_gain = not config.enable_auto_gain
+            options[2] = f"Auto Gain Control: {'Enabled' if config.enable_auto_gain else 'Disabled'}"
+        elif choice == 3:  # VAD threshold
+            print("\nEnter VAD threshold (0.0-1.0, default 0.2): ", end='')
+            try:
+                threshold = float(input().strip())
+                if 0.0 <= threshold <= 1.0:
+                    config.vad_threshold = threshold
+                    options[3] = f"VAD Threshold: {config.vad_threshold}"
+                else:
+                    print("Invalid value. Must be between 0.0 and 1.0")
+            except:
+                print("Invalid input")
+        elif choice == 4:  # Chunk overlap
+            print("\nEnter chunk overlap (0.0-0.5, default 0.2): ", end='')
+            try:
+                overlap = float(input().strip())
+                if 0.0 <= overlap <= 0.5:
+                    config.chunk_overlap = overlap
+                    options[4] = f"Chunk Overlap: {config.chunk_overlap*100:.0f}%"
+                else:
+                    print("Invalid value. Must be between 0.0 and 0.5")
+            except:
+                print("Invalid input")
+        else:  # Done
+            break
+
 def main():
     """Main transcription loop"""
     global pipeline
@@ -240,6 +359,7 @@ def main():
     if show_custom:
         menu_model_variant(config)
         menu_audio_device(config)
+        menu_advanced_options(config)
 
     # Display configuration summary
     config.display_summary()
@@ -324,6 +444,9 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     recording_num = 0
 
+    # Initialize context tracker for cross-chunk continuity
+    context_tracker = ContextTracker()
+
     while running:
         recording_num += 1
 
@@ -345,12 +468,43 @@ def main():
             print(f"[{recording_num}] Processing...", end='', flush=True)
             audio = load_audio(audio_file)
 
-            # Generate mel spectrograms
+            # Debug: Log audio level before preprocessing
+            audio_max = np.max(np.abs(audio))
+            if config.debug_mode:
+                print(f"\n  [DEBUG] Raw audio max amplitude: {audio_max:.4f}", flush=True)
+
+            # Apply VAD and auto-gain preprocessing
+            start_time = None
+            if config.enable_vad or config.enable_auto_gain:
+                audio, start_time = improve_input_audio(
+                    audio,
+                    vad=config.enable_vad,
+                    low_audio_gain=config.enable_auto_gain
+                )
+
+                if config.debug_mode:
+                    if config.enable_auto_gain and np.max(np.abs(audio)) > audio_max:
+                        print(f"  [DEBUG] Audio boosted to: {np.max(np.abs(audio)):.4f}", flush=True)
+                    if config.enable_vad and start_time is not None:
+                        print(f"  [DEBUG] Speech detected at: {start_time:.2f}s", flush=True)
+                    elif config.enable_vad:
+                        print(f"  [DEBUG] No speech detected (processing full chunk)", flush=True)
+
+            # Calculate chunk offset (skip silence at beginning)
+            chunk_offset = 0
+            if start_time is not None and start_time > 0:
+                # Start slightly before detected speech (0.2s buffer)
+                chunk_offset = max(0, start_time - 0.2)
+                if config.debug_mode:
+                    print(f"  [DEBUG] Chunk offset: {chunk_offset:.2f}s", flush=True)
+
+            # Generate mel spectrograms with overlap
             mel_spectrograms = preprocess(
                 audio,
                 is_nhwc=True,
                 chunk_length=config.chunk_duration,
-                chunk_offset=0
+                chunk_offset=chunk_offset,
+                overlap=config.chunk_overlap
             )
 
             if not mel_spectrograms:
@@ -369,7 +523,18 @@ def main():
                 if transcription:
                     text = format_transcription(transcription)
                     if text:
-                        print(f" ✓\n📝 {text}", flush=True)
+                        # Process with context tracker
+                        display_text, is_continuation = context_tracker.process_transcription(text)
+
+                        # Show visual indicator for continuations
+                        if is_continuation:
+                            print(f" ✓\n📝 [CONT] {display_text}", flush=True)
+                        else:
+                            print(f" ✓\n📝 {display_text}", flush=True)
+
+                        if config.debug_mode:
+                            print(f"  [DEBUG] Raw transcription: {text}", flush=True)
+                            print(f"  [DEBUG] Incomplete buffer: {context_tracker.incomplete_buffer or '(empty)'}", flush=True)
                     else:
                         print(" [silence]", flush=True)
                 else:
