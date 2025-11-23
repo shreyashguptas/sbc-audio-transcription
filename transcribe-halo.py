@@ -21,8 +21,8 @@ if os.path.exists(hailo_path):
 try:
     # Import Hailo modules
     from app.hailo_whisper_pipeline import HailoWhisperPipeline
-    from common.audio_utils import load_audio
-    from common.preprocessing import preprocess, improve_input_audio, detect_first_speech
+    from common.audio_utils import load_audio, SAMPLE_RATE
+    from common.preprocessing import preprocess, detect_first_speech
     from common.postprocessing import clean_transcription as postprocess_text
 except ImportError as e:
     print(f"❌ Error importing Hailo modules: {e}")
@@ -30,6 +30,56 @@ except ImportError as e:
     print("  cd ~/Hailo-Application-Code-Examples/runtime/hailo-8/python/speech_recognition")
     print("  python3 setup.py")
     sys.exit(1)
+
+# Helper functions
+def apply_gain(audio, gain_db):
+    """Apply gain to audio signal in decibels"""
+    gain_linear = 10 ** (gain_db / 20)
+    return audio * gain_linear
+
+def improve_input_audio_quiet(audio, vad=True, low_audio_gain=True, vad_threshold=0.2, debug=False):
+    """
+    Improve input audio with optional VAD and auto-gain (quiet version).
+
+    Parameters:
+    - audio: Audio array
+    - vad: Enable voice activity detection
+    - low_audio_gain: Enable automatic gain control
+    - vad_threshold: Energy threshold for VAD (0.0-1.0)
+    - debug: Print debug information
+
+    Returns:
+    - audio: Processed audio
+    - start_time: Timestamp where speech begins (or None)
+    - gain_applied: Gain in dB that was applied (or 0)
+    """
+    audio_max = np.max(np.abs(audio))
+    gain_applied = 0
+
+    # Apply automatic gain control
+    if low_audio_gain:
+        if audio_max < 0.1:
+            gain_applied = 20
+            audio = apply_gain(audio, gain_db=20)
+            if debug:
+                print(f"  [DEBUG] Audio boosted by {gain_applied}dB: {audio_max:.4f} → {np.max(np.abs(audio)):.4f}", flush=True)
+        elif audio_max < 0.2:
+            gain_applied = 10
+            audio = apply_gain(audio, gain_db=10)
+            if debug:
+                print(f"  [DEBUG] Audio boosted by {gain_applied}dB: {audio_max:.4f} → {np.max(np.abs(audio)):.4f}", flush=True)
+
+    # Detect speech start time
+    start_time = None
+    if vad:
+        start_time = detect_first_speech(audio, SAMPLE_RATE, threshold=vad_threshold, frame_duration=0.2)
+        if debug:
+            if start_time is not None:
+                print(f"  [DEBUG] Speech detected at: {start_time:.2f}s", flush=True)
+            else:
+                print(f"  [DEBUG] No speech detected (processing full chunk)", flush=True)
+
+    return audio, start_time, gain_applied
 
 # Configuration
 class Config:
@@ -47,7 +97,7 @@ class Config:
         self.enable_vad = True  # Voice Activity Detection
         self.enable_auto_gain = True  # Automatic gain control for quiet audio
         self.vad_threshold = 0.2  # Energy threshold for speech detection (0.0-1.0)
-        self.chunk_overlap = 0.2  # 20% overlap between chunks for smoother boundaries
+        self.chunk_overlap = 0.0  # Overlap for long audio files (keep 0.0 for real-time)
 
         # Debug settings
         self.debug_mode = False  # Enable detailed logging
@@ -71,7 +121,6 @@ class Config:
         print(f'  Model Variant: {self.model_variant}')
         print(f'  Hardware: {self.hw_arch} (Hailo-8L)')
         print(f'  Chunk Duration: {self.chunk_duration}s')
-        print(f'  Chunk Overlap: {self.chunk_overlap*100:.0f}%')
         print('')
         print('AUDIO SETTINGS:')
         print(f'  Device: {self.device}')
@@ -329,7 +378,9 @@ def menu_advanced_options(config):
             except:
                 print("Invalid input")
         elif choice == 4:  # Chunk overlap
-            print("\nEnter chunk overlap (0.0-0.5, default 0.2): ", end='')
+            print("\n⚠️  Note: Overlap is for long pre-recorded files, not real-time!")
+            print("For real-time transcription, keep at 0.0 (disabled).")
+            print("\nEnter chunk overlap (0.0-0.5, recommended 0.0): ", end='')
             try:
                 overlap = float(input().strip())
                 if 0.0 <= overlap <= 0.5:
@@ -469,34 +520,32 @@ def main():
             audio = load_audio(audio_file)
 
             # Debug: Log audio level before preprocessing
-            audio_max = np.max(np.abs(audio))
             if config.debug_mode:
+                audio_max = np.max(np.abs(audio))
                 print(f"\n  [DEBUG] Raw audio max amplitude: {audio_max:.4f}", flush=True)
 
-            # Apply VAD and auto-gain preprocessing
+            # Apply VAD and auto-gain preprocessing (quiet version - no spam)
             start_time = None
+            gain_applied = 0
             if config.enable_vad or config.enable_auto_gain:
-                audio, start_time = improve_input_audio(
+                audio, start_time, gain_applied = improve_input_audio_quiet(
                     audio,
                     vad=config.enable_vad,
-                    low_audio_gain=config.enable_auto_gain
+                    low_audio_gain=config.enable_auto_gain,
+                    vad_threshold=config.vad_threshold,
+                    debug=config.debug_mode
                 )
 
-                if config.debug_mode:
-                    if config.enable_auto_gain and np.max(np.abs(audio)) > audio_max:
-                        print(f"  [DEBUG] Audio boosted to: {np.max(np.abs(audio)):.4f}", flush=True)
-                    if config.enable_vad and start_time is not None:
-                        print(f"  [DEBUG] Speech detected at: {start_time:.2f}s", flush=True)
-                    elif config.enable_vad:
-                        print(f"  [DEBUG] No speech detected (processing full chunk)", flush=True)
-
-            # Calculate chunk offset (skip silence at beginning)
+            # Calculate chunk offset (skip silence at beginning, but not too aggressively)
             chunk_offset = 0
-            if start_time is not None and start_time > 0:
-                # Start slightly before detected speech (0.2s buffer)
-                chunk_offset = max(0, start_time - 0.2)
+            if start_time is not None and start_time > 0.5:
+                # Only skip if there's significant silence (>0.5s)
+                # Start 0.3s before detected speech for safety
+                chunk_offset = max(0, start_time - 0.3)
                 if config.debug_mode:
-                    print(f"  [DEBUG] Chunk offset: {chunk_offset:.2f}s", flush=True)
+                    print(f"  [DEBUG] Chunk offset: {chunk_offset:.2f}s (speech at {start_time:.2f}s)", flush=True)
+            elif config.debug_mode and start_time is not None:
+                print(f"  [DEBUG] No offset applied (speech starts early at {start_time:.2f}s)", flush=True)
 
             # Generate mel spectrograms with overlap
             mel_spectrograms = preprocess(
