@@ -227,8 +227,9 @@ def main():
                     mel = np.transpose(mel, [0, 1, 3, 2])  # Swap last two dimensions
                     print(f"  Transposed to: {mel.shape}")
 
-                # Convert to C-contiguous array that owns its data
-                mel_contiguous = np.ascontiguousarray(mel, dtype=np.float32)
+                # CRITICAL: Force a copy to ensure the array owns its data
+                # ascontiguousarray() won't copy if already C-contiguous, so use .copy()
+                mel_contiguous = np.ascontiguousarray(mel.copy(), dtype=np.float32)
 
                 print(f"  Final shape: {mel_contiguous.shape}")
                 print(f"  C-contiguous: {mel_contiguous.flags['C_CONTIGUOUS']}, Owns data: {mel_contiguous.flags['OWNDATA']}")
