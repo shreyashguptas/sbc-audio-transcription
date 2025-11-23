@@ -34,7 +34,7 @@ except ImportError as e:
 class Config:
     # Hailo settings
     hw_arch = 'hailo8l'
-    model_variant = 'tiny'  # 'tiny' for 10s chunks, 'base' for 5s chunks
+    model_variant = 'base'  # 'tiny' for 10s chunks, 'base' for 5s chunks (FASTER & MORE REAL-TIME!)
 
     # Audio settings
     device = 'plughw:0,0'
@@ -150,7 +150,12 @@ def main():
     print("\nInitializing Hailo pipeline...")
     try:
         # Construct HEF paths (files are in model-specific subdirectories)
-        encoder_hef = f"{Config.model_variant}-whisper-encoder-{Config.chunk_duration}s_15dB_h8l.hef"
+        # Note: tiny model has "15dB" in name, base model doesn't
+        if Config.model_variant == 'tiny':
+            encoder_hef = f"{Config.model_variant}-whisper-encoder-{Config.chunk_duration}s_15dB_h8l.hef"
+        else:  # base model
+            encoder_hef = f"{Config.model_variant}-whisper-encoder-{Config.chunk_duration}s_h8l.hef"
+
         decoder_hef = f"{Config.model_variant}-whisper-decoder-fixed-sequence-matmul-split_h8l.hef"
 
         encoder_path = os.path.join(Config.hef_dir, Config.model_variant, encoder_hef)
@@ -190,17 +195,21 @@ def main():
         recording_num += 1
 
         # Record audio
-        print(f"\n[Recording {recording_num}] Recording {Config.chunk_duration}s of audio...")
+        print(f"\n[{recording_num}] Recording {Config.chunk_duration}s...", end='', flush=True)
+        start_time = time.time()
         audio_file = record_audio(Config.chunk_duration)
+        record_duration = time.time() - start_time
 
         if not audio_file:
-            print("Recording failed, retrying...")
+            print(" ❌ FAILED")
             time.sleep(1)
             continue
 
+        print(f" ✓ ({record_duration:.1f}s)", flush=True)
+
         try:
             # Load audio (handles conversion to 16kHz mono)
-            print("Processing audio...")
+            print(f"[{recording_num}] Processing...", end='', flush=True)
             audio = load_audio(audio_file)
 
             # Generate mel spectrograms
@@ -212,25 +221,26 @@ def main():
             )
 
             if not mel_spectrograms:
-                print("No audio to process")
+                print(" ⚠️  No audio")
                 continue
 
             # Process through pipeline
             for i, mel in enumerate(mel_spectrograms):
                 # Send mel directly as-is, matching official implementation
-                # Official example sends (1, 1, 1000, 80) directly
                 pipeline.send_data(mel)
-
-                # Small delay as in official example
                 time.sleep(0.1)
 
-                # Get transcription
+                # Get transcription (blocks until result available)
                 transcription = pipeline.get_transcription()
 
                 if transcription:
                     text = format_transcription(transcription)
                     if text:
-                        print(f"\n📝 Transcription: {text}")
+                        print(f" ✓\n📝 {text}", flush=True)
+                    else:
+                        print(" [silence]", flush=True)
+                else:
+                    print(" [no transcription]", flush=True)
 
         except Exception as e:
             print(f"Processing error: {e}")
