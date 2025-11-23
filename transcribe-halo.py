@@ -217,18 +217,18 @@ def main():
 
             # Process through pipeline
             for i, mel in enumerate(mel_spectrograms):
-                print(f"\n[Mel {i+1}] shape: {mel.shape}, dtype: {mel.dtype}, size: {mel.nbytes}")
-                print(f"  Dimensions: {mel.ndim}D array")
-                print(f"  C-contiguous: {mel.flags['C_CONTIGUOUS']}")
-                print(f"  F-contiguous: {mel.flags['F_CONTIGUOUS']}")
-                print(f"  Owns data: {mel.flags['OWNDATA']}")
+                print(f"\n[Mel {i+1}] Original shape: {mel.shape}, dtype: {mel.dtype}")
+                print(f"  C-contiguous: {mel.flags['C_CONTIGUOUS']}, Owns data: {mel.flags['OWNDATA']}")
 
-                # Try passing directly like the official example
-                # Don't squeeze or modify - pass as-is
-                print("  Sending to pipeline as-is...")
+                # CRITICAL: Convert to C-contiguous array that owns its data
+                # This matches what the official pipeline does
+                mel_contiguous = np.ascontiguousarray(mel, dtype=np.float32)
+
+                print(f"  After ascontiguousarray: shape: {mel_contiguous.shape}")
+                print(f"  C-contiguous: {mel_contiguous.flags['C_CONTIGUOUS']}, Owns data: {mel_contiguous.flags['OWNDATA']}")
 
                 # Send to pipeline
-                pipeline.send_data(mel)
+                pipeline.send_data(mel_contiguous)
 
                 # Small delay as in official example
                 time.sleep(0.1)
