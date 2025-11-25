@@ -1,10 +1,10 @@
 # Hailo-Accelerated Whisper Transcription on Raspberry Pi 5
 
-Real-time speech-to-text transcription using OpenAI's Whisper model accelerated by the Hailo-8L AI processor on Raspberry Pi 5 with dual INMP441 I2S microphones.
+Real-time speech-to-text transcription using OpenAI's Whisper model accelerated by the Hailo-8L AI processor on Raspberry Pi 5 with ReSpeaker 2-Mic Pi HAT.
 
 **Features:**
 - ⚡ Hardware-accelerated inference with Hailo-8L (13 TOPS)
-- 🎤 High-quality 48kHz stereo audio recording
+- 🎤 High-quality 48kHz stereo audio recording with ReSpeaker 2-Mic HAT
 - 🔄 Real-time continuous transcription
 - 💻 CPU fallback mode available
 - 🎯 Optimized for Raspberry Pi 5
@@ -16,17 +16,19 @@ Real-time speech-to-text transcription using OpenAI's Whisper model accelerated 
 ### Essential Components
 - **Raspberry Pi 5** (4GB or 8GB RAM)
 - **Hailo AI HAT** (M.2 HAT+ with Hailo-8L accelerator)
-- **2x INMP441 I2S Microphones** (stereo setup)
+- **KEYESTUDIO ReSpeaker 2-Mic Pi HAT** (shield for Raspberry Pi)
 - **Official 27W USB-C Power Supply** (required for stable Hailo operation)
 - **32GB+ MicroSD Card** with Raspberry Pi OS Bookworm 64-bit
 
-### Microphone Wiring
-See **[PINOUT.md](PINOUT.md)** for complete wiring diagram.
+### Hardware Setup
+The ReSpeaker 2-Mic HAT is a plug-and-play shield that stacks directly on top of the Raspberry Pi GPIO pins. No wiring needed!
 
-**Quick Reference:**
-- Both mics share: VDD (3.3V), GND, SD (GPIO20), WS (GPIO19), SCK (GPIO18)
-- **Left mic**: L/R pin → GND
-- **Right mic**: L/R pin → VDD
+**Installation:**
+1. Power off your Raspberry Pi 5
+2. Stack the Hailo AI HAT on the M.2 slot (bottom layer)
+3. Stack the ReSpeaker 2-Mic HAT on the GPIO pins (top layer)
+4. Ensure all pins are properly aligned and seated
+5. Power on the Raspberry Pi
 
 ---
 
@@ -77,28 +79,24 @@ sudo apt install -y alsa-utils libsndfile1
 sudo reboot
 ```
 
-### Step 2: Configure I2S Audio for Dual Microphones
+### Step 2: Install ReSpeaker 2-Mic HAT Drivers
 
-Edit `/boot/firmware/config.txt`:
-
-```bash
-sudo nano /boot/firmware/config.txt
-```
-
-**Add these lines in the audio section:**
+The ReSpeaker HAT requires official Seeed Studio drivers for proper audio functionality.
 
 ```bash
-# I2S Audio Configuration for Dual INMP441 Microphones
-dtparam=i2s=on
-dtoverlay=i2s-mmap
-dtoverlay=googlevoicehat-soundcard
-```
+# Clone the ReSpeaker driver repository
+cd ~
+git clone https://github.com/respeaker/seeed-voicecard.git
+cd seeed-voicecard
 
-**Save and reboot:**
+# Install the drivers
+sudo ./install.sh
 
-```bash
+# Reboot to load the drivers
 sudo reboot
 ```
+
+**Note:** The install script will automatically configure `/boot/firmware/config.txt` with the necessary device tree overlays for the ReSpeaker HAT.
 
 ### Step 3: Verify Hailo Hardware
 
@@ -121,7 +119,7 @@ python3 -c "from hailo_platform import HEF; print('Hailo Python bindings OK')"
 ```bash
 # List audio devices
 arecord -l
-# Expected: card 0: sndrpigooglevoi [snd_rpi_googlevoicehat_soundcar]
+# Expected: card 0: seeed2micvoicec [seeed-2mic-voicecard]
 
 # Test 48kHz stereo recording (5 seconds)
 arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 5 test.wav
@@ -134,11 +132,11 @@ ls -lh test.wav
 **To test audio on your Mac:**
 
 ```bash
-# On your Mac, copy the test file:
-scp pi@raspberrypi.local:~/test.wav ~/Desktop/
+# On your Mac, copy the test file from the Raspberry Pi:
+scp shreyash@pi-5-1:~/test.wav /Users/shreyashgupta/Desktop/pi-audio-test/
 
 # Play it:
-afplay ~/Desktop/test.wav
+afplay /Users/shreyashgupta/Desktop/pi-audio-test/test.wav
 ```
 
 ### Step 5: Clone Hailo Examples
@@ -221,7 +219,7 @@ Audio and processing parameters are configured in `transcribe-halo.py`:
 
 ```python
 class HailoTranscriptionConfig:
-    # Audio hardware (48kHz stereo for dual INMP441)
+    # Audio hardware (48kHz stereo for ReSpeaker 2-Mic HAT)
     audio_sample_rate = 48000  # Hz
     audio_channels = 2         # Stereo
 
@@ -297,14 +295,12 @@ arecord -l
 
 **Verify config.txt:**
 ```bash
-cat /boot/firmware/config.txt | grep -E 'i2s|voice'
+cat /boot/firmware/config.txt | grep -E 'seeed|voice'
 ```
 
-Should show:
+Should show ReSpeaker device tree overlays (automatically added by install script):
 ```
-dtparam=i2s=on
-dtoverlay=i2s-mmap
-dtoverlay=googlevoicehat-soundcard
+dtoverlay=seeed-2mic-voicecard
 ```
 
 ### Issue: Hailo Not Detected
@@ -325,12 +321,14 @@ sudo reboot
 
 ## Audio Quality Tips
 
-1. **Microphone Placement:** Position mics 10-15cm from speaker for best results
+1. **Microphone Placement:** The ReSpeaker HAT has dual omnidirectional microphones. Position the Raspberry Pi 15-30cm from the speaker for best results
 2. **Gain Adjustment:** Modify `self.gain = 30.0` in config if audio is too quiet/loud
 3. **Test Recording:**
    ```bash
-   # Increase gain with mixer (if available)
-   amixer -c 0 set Capture 100%
+   # Adjust ReSpeaker HAT gain (if needed)
+   amixer -c 0 set Capture 80%
+
+   # The ReSpeaker HAT also has onboard LEDs that indicate audio activity
    ```
 4. **Verify Stereo:** Both channels should show waveforms in audio analysis tools
 
@@ -341,8 +339,7 @@ sudo reboot
 ```
 sbc-audio-transcription/
 ├── README.md                 # This file - comprehensive setup guide
-├── PINOUT.md                 # Microphone wiring diagram
-├── requirements.txt          # Python dependencies (NO PyTorch)
+├── requirements.txt          # Python dependencies
 ├── transcribe-halo.py        # Hailo-accelerated transcription
 ├── transcribe.py             # CPU fallback version
 └── .gitignore               # Git ignore rules
@@ -377,14 +374,14 @@ sbc-audio-transcription/
 ### Debug Audio
 
 ```bash
-# Test microphone levels
+# Test microphone levels with ReSpeaker HAT
 arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 10 test-debug.wav -V stereo
 
 # Check file size (should be ~1.9MB for 10 seconds)
 ls -lh test-debug.wav
 
 # Copy to Mac for playback testing
-scp test-debug.wav user@mac-hostname:~/Desktop/
+scp test-debug.wav shreyash@pi-5-1:/Users/shreyashgupta/Desktop/pi-audio-test/
 ```
 
 ### Check Hailo Logs
