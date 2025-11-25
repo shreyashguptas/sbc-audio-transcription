@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Interactive Hailo Whisper Transcription for Raspberry Pi 5 with Hailo-8L
-Records audio and performs real-time transcription using hardware acceleration.
+Records audio from ReSpeaker 2-Mic Pi HAT and performs real-time transcription using hardware acceleration.
 """
 
 import os
