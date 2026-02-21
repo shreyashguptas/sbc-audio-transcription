@@ -4,10 +4,10 @@ Real-time speech-to-text transcription using OpenAI's Whisper model accelerated 
 
 **Features:**
 - ⚡ Hardware-accelerated inference with Hailo-8L (13 TOPS)
-- 🎤 High-quality 48kHz stereo audio recording with ReSpeaker 2-Mic HAT
+- 🎤 High-quality 16kHz stereo audio recording with ReSpeaker 2-Mic HAT
 - 🔄 Real-time continuous transcription
 - 💻 CPU fallback mode available
-- 🎯 Optimized for Raspberry Pi 5
+- 🎯 Optimized for Raspberry Pi 5 with kernel 6.12+
 
 ---
 
@@ -81,13 +81,31 @@ sudo reboot
 
 ### Step 2: Install ReSpeaker 2-Mic HAT Drivers
 
-The ReSpeaker HAT requires official Seeed Studio drivers for proper audio functionality.
+The ReSpeaker HAT uses a WM8960 audio codec that requires special drivers for Raspberry Pi 5.
+
+**Important:** The original `respeaker/seeed-voicecard` drivers have compatibility issues with Pi 5:
+- Pi 5's RP1 chip doesn't provide MCLK (Master Clock) like older Pis
+- Kernel 6.12+ has API changes that break the original drivers
+
+**Use the automated installer (Recommended):**
 
 ```bash
-# Clone the ReSpeaker driver repository
+# From this repository directory
+cd ~/sbc-audio-transcription
+sudo ./install-pi5.sh
+
+# Reboot to load the drivers
+sudo reboot
+```
+
+**Or install manually:**
+
+```bash
+# Clone the HinTak fork (kernel 6.12 compatible)
 cd ~
-git clone https://github.com/respeaker/seeed-voicecard.git
+git clone https://github.com/HinTak/seeed-voicecard
 cd seeed-voicecard
+git checkout v6.12
 
 # Install the drivers
 sudo ./install.sh
@@ -96,7 +114,7 @@ sudo ./install.sh
 sudo reboot
 ```
 
-**Note:** The install script will automatically configure `/boot/firmware/config.txt` with the necessary device tree overlays for the ReSpeaker HAT.
+**Note:** The `install-pi5.sh` script handles all dependencies, configuration, and uses the correct driver fork automatically.
 
 ### Step 3: Verify Hailo Hardware
 
@@ -121,22 +139,22 @@ python3 -c "from hailo_platform import HEF; print('Hailo Python bindings OK')"
 arecord -l
 # Expected: card 0: seeed2micvoicec [seeed-2mic-voicecard]
 
-# Test 48kHz stereo recording (5 seconds)
-arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 5 test.wav
+# Test 16kHz stereo recording (5 seconds) - 16kHz is optimal for Whisper
+arecord -D plughw:0,0 -f S16_LE -r 16000 -c 2 -d 5 ~/test-recording.wav
 
 # Check file was created
-ls -lh test.wav
-# Expected: ~960KB file (5 sec * 48000 Hz * 2 ch * 2 bytes)
+ls -lh ~/test-recording.wav
+# Expected: ~320KB file (5 sec * 16000 Hz * 2 ch * 2 bytes)
 ```
 
 **To test audio on your Mac:**
 
 ```bash
 # On your Mac, copy the test file from the Raspberry Pi:
-scp shreyash@pi-5-1:~/test.wav /Users/shreyashgupta/Desktop/pi-audio-test/
+scp shreyash@pi-5-1:~/test-recording.wav /Users/shreyashgupta/Desktop/pi-audio-test/
 
 # Play it:
-afplay /Users/shreyashgupta/Desktop/pi-audio-test/test.wav
+afplay /Users/shreyashgupta/Desktop/pi-audio-test/test-recording.wav
 ```
 
 ### Step 5: Clone Hailo Examples
@@ -194,7 +212,7 @@ python transcribe-halo.py
 **Features:**
 - Hardware-accelerated inference on Hailo-8L
 - Real-time continuous transcription
-- 48kHz stereo audio recording
+- 16kHz stereo audio recording (Whisper's native rate)
 - Automatic chunking with overlap
 - Low latency
 
@@ -219,8 +237,8 @@ Audio and processing parameters are configured in `transcribe-halo.py`:
 
 ```python
 class HailoTranscriptionConfig:
-    # Audio hardware (48kHz stereo for ReSpeaker 2-Mic HAT)
-    audio_sample_rate = 48000  # Hz
+    # Audio hardware (16kHz stereo - optimal for Whisper)
+    audio_sample_rate = 16000  # Hz (Whisper's native rate)
     audio_channels = 2         # Stereo
 
     # Processing
@@ -293,12 +311,28 @@ lsmod | grep snd
 arecord -l
 ```
 
+**Check for "No MCLK configured" error:**
+```bash
+dmesg | grep -i mclk
+```
+
+If you see `wm8960 1-001a: No MCLK configured`, you're using incompatible drivers. Fix by reinstalling with the HinTak fork:
+
+```bash
+cd ~
+git clone https://github.com/HinTak/seeed-voicecard
+cd seeed-voicecard
+git checkout v6.12
+sudo ./install.sh
+sudo reboot
+```
+
 **Verify config.txt:**
 ```bash
 cat /boot/firmware/config.txt | grep -E 'seeed|voice'
 ```
 
-Should show ReSpeaker device tree overlays (automatically added by install script):
+Should show ReSpeaker device tree overlays:
 ```
 dtoverlay=seeed-2mic-voicecard
 ```
@@ -339,6 +373,7 @@ sudo reboot
 ```
 sbc-audio-transcription/
 ├── README.md                 # This file - comprehensive setup guide
+├── install-pi5.sh            # Automated driver installer for Pi 5 + kernel 6.12
 ├── requirements.txt          # Python dependencies
 ├── transcribe-halo.py        # Hailo-accelerated transcription
 ├── transcribe.py             # CPU fallback version
@@ -350,8 +385,8 @@ sbc-audio-transcription/
 ## Technical Details
 
 ### Audio Pipeline
-1. **Recording:** arecord → 48kHz stereo S16_LE
-2. **Preprocessing:** Resample to 16kHz mono (Whisper requirement)
+1. **Recording:** arecord → 16kHz stereo S16_LE (native Whisper rate)
+2. **Preprocessing:** Convert to mono (Whisper requirement)
 3. **Feature Extraction:** Convert to mel spectrogram
 4. **Inference:** Hailo-8L accelerated encoder/decoder
 5. **Postprocessing:** Token to text conversion
@@ -374,14 +409,14 @@ sbc-audio-transcription/
 ### Debug Audio
 
 ```bash
-# Test microphone levels with ReSpeaker HAT
-arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 10 test-debug.wav -V stereo
+# Test microphone levels with ReSpeaker HAT (16kHz for Whisper compatibility)
+arecord -D plughw:0,0 -f S16_LE -r 16000 -c 2 -d 10 ~/test-debug.wav
 
-# Check file size (should be ~1.9MB for 10 seconds)
-ls -lh test-debug.wav
+# Check file size (should be ~640KB for 10 seconds at 16kHz stereo)
+ls -lh ~/test-debug.wav
 
 # Copy to Mac for playback testing
-scp test-debug.wav shreyash@pi-5-1:/Users/shreyashgupta/Desktop/pi-audio-test/
+scp shreyash@pi-5-1:~/test-debug.wav /Users/shreyashgupta/Desktop/pi-audio-test/
 ```
 
 ### Check Hailo Logs
@@ -430,6 +465,8 @@ MIT License - See LICENSE file for details
 - [Hailo AI](https://hailo.ai/) for the Hailo-8L accelerator and examples
 - [OpenAI](https://openai.com/) for the Whisper model
 - [Raspberry Pi Foundation](https://www.raspberrypi.org/) for the incredible Pi 5 hardware
+- [HinTak](https://github.com/HinTak/seeed-voicecard) for the kernel 6.12 compatible seeed-voicecard driver fork
+- [Seeed Studio](https://www.seeedstudio.com/) for the ReSpeaker 2-Mic HAT
 
 ---
 

@@ -4,3 +4,4 @@
  files are to get additional context at this command 'ssh shreyash@pi-5-1'. But always create and make changes to files
  on my local Mac. The SSH to the Raspberry Pi should only be used to get additional context of how things are working
 on the device.
+- You can always SSH into the device to run any commands to understand the workings of your device or any configuration. But don't make changes to any files on the remote Raspberry Pi device. The ssh to the raspberry pi device is - ssh shreyash@pi-5-1

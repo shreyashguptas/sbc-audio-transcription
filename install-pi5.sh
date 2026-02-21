@@ -9,14 +9,15 @@
 #
 # This script handles everything:
 #   - Installs all dependencies (dkms, i2c-tools, kernel headers, etc.)
-#   - Clones the seeed-voicecard driver repository
+#   - Clones the HinTak/seeed-voicecard driver (kernel 6.12 compatible fork)
 #   - Configures /boot/firmware/config.txt correctly for Pi 5
-#   - Copies overlay files to the correct location
 #   - Compiles and installs kernel modules via DKMS
 #
-# The original seeed-voicecard install.sh has Pi 5 Bookworm compatibility issues:
-#   - Writes to wrong config file (/boot/config.txt instead of /boot/firmware/config.txt)
-#   - Assumes dkms is pre-installed
+# Why HinTak fork?
+#   The original respeaker/seeed-voicecard and waveshare drivers have issues:
+#   - "No MCLK configured" error on Pi 5 (RP1 chip doesn't provide MCLK like older Pis)
+#   - Compilation errors on kernel 6.12+ due to API changes
+#   The HinTak fork (v6.12 branch) fixes these issues.
 #
 
 set -e
@@ -28,15 +29,15 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
-VOICECARD_REPO="https://github.com/respeaker/seeed-voicecard.git"
+# Configuration - Using HinTak fork with kernel 6.12 support
+VOICECARD_REPO="https://github.com/HinTak/seeed-voicecard"
+VOICECARD_BRANCH="v6.12"
 VOICECARD_DIR="/tmp/seeed-voicecard"
 CONFIG="/boot/firmware/config.txt"
-OVERLAYS_DIR="/boot/firmware/overlays"
-MODULES_FILE="/etc/modules"
 
 echo -e "${GREEN}======================================================${NC}"
 echo -e "${GREEN}  ReSpeaker 2-Mic HAT Installer for Pi 5 + Bookworm  ${NC}"
+echo -e "${GREEN}         (Kernel 6.12 Compatible - HinTak Fork)       ${NC}"
 echo -e "${GREEN}======================================================${NC}"
 echo
 
@@ -90,13 +91,18 @@ else
     exit 1
 fi
 
+# Check kernel version
+KERNEL_VERSION=$(uname -r)
+echo -e "  ${GREEN}✓${NC} Kernel: $KERNEL_VERSION"
+
 echo
 
 # ------------------------------------------------------------------------------
-# Step 1: Install dependencies
+# Step 1: Update system and install dependencies
 # ------------------------------------------------------------------------------
-echo -e "${GREEN}[1/7] Installing system dependencies...${NC}"
+echo -e "${GREEN}[1/4] Updating system and installing dependencies...${NC}"
 apt-get update
+apt-get upgrade -y
 apt-get install -y \
     dkms \
     git \
@@ -109,9 +115,9 @@ echo -e "  ${GREEN}✓${NC} Dependencies installed"
 echo
 
 # ------------------------------------------------------------------------------
-# Step 2: Clone seeed-voicecard repository
+# Step 2: Clone HinTak seeed-voicecard repository (kernel 6.12 compatible)
 # ------------------------------------------------------------------------------
-echo -e "${GREEN}[2/7] Cloning seeed-voicecard driver repository...${NC}"
+echo -e "${GREEN}[2/4] Cloning HinTak/seeed-voicecard (v6.12 branch)...${NC}"
 
 # Clean up any previous clone
 if [[ -d "$VOICECARD_DIR" ]]; then
@@ -119,151 +125,43 @@ if [[ -d "$VOICECARD_DIR" ]]; then
     rm -rf "$VOICECARD_DIR"
 fi
 
-git clone --depth 1 "$VOICECARD_REPO" "$VOICECARD_DIR"
-echo -e "  ${GREEN}✓${NC} Repository cloned to $VOICECARD_DIR"
+# Clone and checkout the v6.12 branch
+git clone "$VOICECARD_REPO" "$VOICECARD_DIR"
+cd "$VOICECARD_DIR"
+git checkout "$VOICECARD_BRANCH"
+
+echo -e "  ${GREEN}✓${NC} Repository cloned (branch: $VOICECARD_BRANCH)"
 echo
 
 # ------------------------------------------------------------------------------
-# Step 3: Configure /boot/firmware/config.txt
+# Step 3: Backup config and clean up any previous failed attempts
 # ------------------------------------------------------------------------------
-echo -e "${GREEN}[3/7] Configuring $CONFIG...${NC}"
+echo -e "${GREEN}[3/4] Preparing system configuration...${NC}"
 
 # Backup config
 cp "$CONFIG" "${CONFIG}.backup.$(date +%Y%m%d%H%M%S)"
 echo "  - Created backup of config.txt"
 
-# Enable I2C
-if grep -q "^#dtparam=i2c_arm=on" "$CONFIG"; then
-    sed -i 's/^#dtparam=i2c_arm=on/dtparam=i2c_arm=on/' "$CONFIG"
-    echo "  - Enabled i2c_arm (uncommented)"
-elif ! grep -q "^dtparam=i2c_arm=on" "$CONFIG"; then
-    echo "dtparam=i2c_arm=on" >> "$CONFIG"
-    echo "  - Added dtparam=i2c_arm=on"
-else
-    echo "  - i2c_arm already enabled"
-fi
+# Remove any previous failed overlay entries
+sed -i '/seeed-2mic-voicecard/d' "$CONFIG"
+sed -i '/wm8960-soundcard/d' "$CONFIG"
+echo "  - Cleaned previous overlay entries"
 
-# Enable I2S
-if ! grep -q "^dtparam=i2s=on" "$CONFIG"; then
-    echo "dtparam=i2s=on" >> "$CONFIG"
-    echo "  - Added dtparam=i2s=on"
-else
-    echo "  - i2s already enabled"
-fi
-
-# Add i2s-mmap overlay
-if ! grep -q "^dtoverlay=i2s-mmap" "$CONFIG"; then
-    echo "dtoverlay=i2s-mmap" >> "$CONFIG"
-    echo "  - Added dtoverlay=i2s-mmap"
-else
-    echo "  - i2s-mmap overlay already present"
-fi
-
-# Add seeed-2mic-voicecard overlay
-if ! grep -q "^dtoverlay=seeed-2mic-voicecard" "$CONFIG"; then
-    echo "dtoverlay=seeed-2mic-voicecard" >> "$CONFIG"
-    echo "  - Added dtoverlay=seeed-2mic-voicecard"
-else
-    echo "  - seeed-2mic-voicecard overlay already present"
-fi
-
-echo -e "  ${GREEN}✓${NC} Config updated"
+echo -e "  ${GREEN}✓${NC} System prepared"
 echo
 
 # ------------------------------------------------------------------------------
-# Step 4: Copy overlay files
+# Step 4: Run the HinTak install script
 # ------------------------------------------------------------------------------
-echo -e "${GREEN}[4/7] Installing device tree overlays...${NC}"
-
-cp "$VOICECARD_DIR/seeed-2mic-voicecard.dtbo" "$OVERLAYS_DIR/"
-echo "  - Installed seeed-2mic-voicecard.dtbo"
-
-# Copy additional overlays if present
-for overlay in seeed-4mic-voicecard.dtbo seeed-8mic-voicecard.dtbo; do
-    if [[ -f "$VOICECARD_DIR/$overlay" ]]; then
-        cp "$VOICECARD_DIR/$overlay" "$OVERLAYS_DIR/"
-        echo "  - Installed $overlay"
-    fi
-done
-
-echo -e "  ${GREEN}✓${NC} Overlays installed"
+echo -e "${GREEN}[4/4] Installing drivers (this may take several minutes)...${NC}"
+echo "  Running install.sh from HinTak/seeed-voicecard..."
 echo
-
-# ------------------------------------------------------------------------------
-# Step 5: Configure kernel modules
-# ------------------------------------------------------------------------------
-echo -e "${GREEN}[5/7] Configuring kernel modules...${NC}"
-
-if ! grep -q "^snd-soc-seeed-voicecard" "$MODULES_FILE"; then
-    echo "snd-soc-seeed-voicecard" >> "$MODULES_FILE"
-    echo "  - Added snd-soc-seeed-voicecard to /etc/modules"
-else
-    echo "  - snd-soc-seeed-voicecard already in /etc/modules"
-fi
-
-if ! grep -q "^snd-soc-wm8960" "$MODULES_FILE"; then
-    echo "snd-soc-wm8960" >> "$MODULES_FILE"
-    echo "  - Added snd-soc-wm8960 to /etc/modules"
-else
-    echo "  - snd-soc-wm8960 already in /etc/modules"
-fi
-
-echo -e "  ${GREEN}✓${NC} Kernel modules configured"
-echo
-
-# ------------------------------------------------------------------------------
-# Step 6: Compile drivers via DKMS
-# ------------------------------------------------------------------------------
-echo -e "${GREEN}[6/7] Compiling kernel modules (this may take a few minutes)...${NC}"
 
 cd "$VOICECARD_DIR"
-
-# Run the original install script for DKMS compilation
-# We suppress config.txt related output since we handle that ourselves
-echo "  Running seeed-voicecard install.sh for DKMS..."
-if ./install.sh 2>&1 | tee /tmp/seeed-install.log | grep -E "^(dkms|Building|running|DKMS)" || true; then
-    :
-fi
-
-# Verify DKMS installation
-if dkms status 2>/dev/null | grep -q "seeed-voicecard"; then
-    echo -e "  ${GREEN}✓${NC} DKMS modules compiled and installed"
-else
-    echo -e "${YELLOW}  Warning: DKMS status unclear, check /tmp/seeed-install.log${NC}"
-fi
+./install.sh
 
 echo
-
-# ------------------------------------------------------------------------------
-# Step 7: Setup ALSA config
-# ------------------------------------------------------------------------------
-echo -e "${GREEN}[7/7] Setting up ALSA configuration...${NC}"
-
-# Create voicecard config directory
-mkdir -p /etc/voicecard
-
-# Copy ALSA state files
-if [[ -f "$VOICECARD_DIR/wm8960_asound.state" ]]; then
-    cp "$VOICECARD_DIR/wm8960_asound.state" /etc/voicecard/
-    echo "  - Installed ALSA state file"
-fi
-
-if [[ -f "$VOICECARD_DIR/asound_2mic.conf" ]]; then
-    cp "$VOICECARD_DIR/asound_2mic.conf" /etc/voicecard/
-    echo "  - Installed ALSA config"
-fi
-
-# Copy and enable the seeed-voicecard service
-if [[ -f "$VOICECARD_DIR/seeed-voicecard.service" ]]; then
-    cp "$VOICECARD_DIR/seeed-voicecard.service" /lib/systemd/system/
-    cp "$VOICECARD_DIR/seeed-voicecard" /usr/bin/
-    chmod +x /usr/bin/seeed-voicecard
-    systemctl daemon-reload
-    systemctl enable seeed-voicecard.service
-    echo "  - Enabled seeed-voicecard service"
-fi
-
-echo -e "  ${GREEN}✓${NC} ALSA configured"
+echo -e "  ${GREEN}✓${NC} Driver installation complete"
 echo
 
 # ------------------------------------------------------------------------------
@@ -288,11 +186,11 @@ echo
 echo "After reboot, verify the installation with:"
 echo
 echo "  arecord -l"
-echo "  # Expected: card X: seeed2micvoicec [seeed-2mic-voicecard]"
+echo "  # Expected: card 0: seeed2micvoicec [seeed-2mic-voicecard]"
 echo
-echo "  ls /dev/i2c*"
-echo "  # Expected: /dev/i2c-1"
+echo "  # Test recording (5 seconds at 16kHz stereo):"
+echo "  arecord -D plughw:0,0 -f S16_LE -r 16000 -c 2 -d 5 ~/test-recording.wav"
 echo
-echo "  # Test recording (5 seconds):"
-echo "  arecord -D plughw:0,0 -f S16_LE -r 48000 -c 2 -d 5 test.wav"
+echo "  # Play back on Mac (copy first):"
+echo "  # scp pi-hostname:~/test-recording.wav ~/Desktop/"
 echo
